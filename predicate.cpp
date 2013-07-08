@@ -45,117 +45,104 @@ Iterator skipSpaces(Iterator it, Iterator end)
     return it;
 }
 
-
-struct {
-    template <class Iterator>
-    bool operator() (Iterator& begin, Iterator end, const char* pattern) const
-    {
-        Iterator it = skipSpaces(begin, end);
-        while (*pattern != '\0' && it != end && *it == *pattern) {
-            ++pattern;
-            ++it;
-        }
-        if (*pattern == '\0') {
-            begin = it;
-            return true;
-        } else {
-            return false;
-        }
+template <class Iterator>
+bool parsePattern(Iterator& begin, Iterator end, const char* pattern)
+{
+    Iterator it = skipSpaces(begin, end);
+    while (*pattern != '\0' && it != end && *it == *pattern) {
+        ++pattern;
+        ++it;
     }
-
-} parsePattern;
+    if (*pattern == '\0') {
+        begin = it;
+        return true;
+    } else {
+        return false;
+    }
+}
 
 
 // NAME
 
-struct {
-    template <class Iterator>
-    bool operator() (Iterator& begin, Iterator end, String* name) const
-    {
-        Iterator it = skipSpaces(begin, end);
-        if (it == end || !isalpha(static_cast<unsigned char>(*it))) {
-            return false;
-        }
-        const Iterator start = it;
-        while (it != end && (isalpha(static_cast<unsigned char>(*it)) || isalpha(static_cast<unsigned char>(*it)) || *it == '_')) {
-            ++it;
-        }
-        const Iterator stop = it;
-        name->assign(start, stop);
-        begin = it;
-        return true;
+template <class Iterator>
+bool parseName(Iterator& begin, Iterator end, String* name)
+{
+    Iterator it = skipSpaces(begin, end);
+    if (it == end || !isalpha(static_cast<unsigned char>(*it))) {
+        return false;
     }
-} parseName;
+    const Iterator start = it;
+    while (it != end && (isalpha(static_cast<unsigned char>(*it)) || isalpha(static_cast<unsigned char>(*it)) || *it == '_')) {
+        ++it;
+    }
+    const Iterator stop = it;
+    name->assign(start, stop);
+    begin = it;
+    return true;
+}
 
 
 // STRING
 
-struct {
-    template <class Iterator>
-    bool operator() (Iterator& begin, Iterator end, String* string) const
-    {
-        Iterator it = skipSpaces(begin, end);
-        if (!parsePattern(it, end, "'")) {
-            return false;
-        }
-        const Iterator start = it;
-        while (it != end && *it != '\'') {
-            ++it;
-        }
-        const Iterator stop = it;
-        if (!parsePattern(it, end, "'")) {
-            return false;
-        }
-        string->assign(start, stop);
-        begin = it;
-        return true;
+template <class Iterator>
+bool parseString(Iterator& begin, Iterator end, String* string)
+{
+    Iterator it = skipSpaces(begin, end);
+    if (!parsePattern(it, end, "'")) {
+        return false;
     }
-} parseString;
+    const Iterator start = it;
+    while (it != end && *it != '\'') {
+        ++it;
+    }
+    const Iterator stop = it;
+    if (!parsePattern(it, end, "'")) {
+        return false;
+    }
+    string->assign(start, stop);
+    begin = it;
+    return true;
+}
 
 
 // set: '{' '}' | '{' NAME set_tail* '} | '{' STRING set_tail* '}'
 // set_tail: ',' NAME | ',' STRING
 
-struct {
-    template <class Iterator>
-    bool operator() (Iterator& begin, Iterator end, Set* set) const
-    {
-        Iterator it = begin;
-        if (!parsePattern(it, end, ",")) {
-            return false;
-        }
-        String string;
-        if (!parseString(it, end, &string) && !parseName(it, end, &string)) {
-            return false;
-        }
+template <class Iterator>
+bool parseSetTail(Iterator& begin, Iterator end, Set* set)
+{
+    Iterator it = begin;
+    if (!parsePattern(it, end, ",")) {
+        return false;
+    }
+    String string;
+    if (!parseString(it, end, &string) && !parseName(it, end, &string)) {
+        return false;
+    }
+    set->insert(std::move(string));
+    begin = it;
+    return true;
+}
+
+template <class Iterator>
+bool parseSet(Iterator& begin, Iterator end, Set* set)
+{
+    set->clear();
+    Iterator it = begin;
+    if (!parsePattern(it, end, "{")) {
+        return false;
+    }
+    String string;
+    if (parseString(it, end, &string) || parseName(it, end, &string)) {
         set->insert(std::move(string));
-        begin = it;
-        return true;
+        while (parseSetTail(it, end, set));
     }
-} parseSetTail;
-
-
-struct {
-    template <class Iterator>
-    bool operator() (Iterator& begin, Iterator end, Set* set) const
-    {
-        set->clear();
-        Iterator it = begin;
-        if (!parsePattern(it, end, "{")) {
-            return false;
-        }
-        String string;
-        if (parseString(it, end, &string) || parseName(it, end, &string)) {
-            set->insert(std::move(string));
-            while (parseSetTail(it, end, set));
-        }
-        if (!parsePattern(it, end, "}")) {
-            return false;
-        }
-        begin = it;
-        return true;
+    if (!parsePattern(it, end, "}")) {
+        return false;
     }
-} parseSet;
+    begin = it;
+    return true;
+}
 
 
 // term: NAME | STRING
@@ -188,20 +175,18 @@ struct VariableTerm {
     }
 };
 
-struct {
-    template <class Iterator>
-    Term operator() (Iterator& begin, Iterator end) const
-    {
-        String string;
-        if (parseName(begin, end, &string)) {
-            return VariableTerm{string};
-        } else if (parseString(begin, end, &string)) {
-            return StringTerm{string};
-        } else {
-            return {};
-        }
+template <class Iterator>
+Term parseTerm(Iterator& begin, Iterator end)
+{
+    String string;
+    if (parseName(begin, end, &string)) {
+        return VariableTerm{string};
+    } else if (parseString(begin, end, &string)) {
+        return StringTerm{string};
+    } else {
+        return {};
     }
-} parseTerm;
+}
 
 
 // comparison: term '==' term |
@@ -231,159 +216,124 @@ struct NotInComparison {
     bool operator() (const Variables& variables) const { return set.count(left(variables)) == 0; }
 };
 
-struct {
-    template <class Iterator>
-    Expression operator() (Iterator& it, Iterator end) const
-    {
-        const Iterator oldIt = it;
-        if (Term left = parseTerm(it, end)) {
-            if (parsePattern(it, end, "==")) {
-                if (Term right = parseTerm(it, end)) {
-                    return EqualComparison{ std::move(left), std::move(right) };
-                }
+template <class Iterator>
+Expression parseComparison(Iterator& it, Iterator end)
+{
+    const Iterator oldIt = it;
+    if (Term left = parseTerm(it, end)) {
+        if (parsePattern(it, end, "==")) {
+            if (Term right = parseTerm(it, end)) {
+                return EqualComparison{ std::move(left), std::move(right) };
+            }
 
-            } else if (parsePattern(it, end, "!=")) {
-                if (Term right = parseTerm(it, end)) {
-                    return NotEqualComparison{ std::move(left), std::move(right) };
-                }
+        } else if (parsePattern(it, end, "!=")) {
+            if (Term right = parseTerm(it, end)) {
+                return NotEqualComparison{ std::move(left), std::move(right) };
+            }
 
-            } else if (parsePattern(it, end, "in")) {
-                Set right;
-                if (parseSet(it, end, &right)) {
-                    return InComparison{ std::move(left), std::move(right) };;
-                }
+        } else if (parsePattern(it, end, "in")) {
+            Set right;
+            if (parseSet(it, end, &right)) {
+                return InComparison{ std::move(left), std::move(right) };;
+            }
 
-            } else if (parsePattern(it, end, "not") && parsePattern(it, end, "in")) {
-                Set right;
-                if (parseSet(it, end, &right)) {
-                    return NotInComparison{ std::move(left), std::move(right) };;
-                }
+        } else if (parsePattern(it, end, "not") && parsePattern(it, end, "in")) {
+            Set right;
+            if (parseSet(it, end, &right)) {
+                return NotInComparison{ std::move(left), std::move(right) };;
             }
         }
-        it = oldIt;
-        return {};
     }
-} parseComparison;
+    it = oldIt;
+    return {};
+}
 
 
 // not_expression: 'not' not_expression | comparison | '(' expression ')'
 
+template <class Iterator>
+Expression parseExpression(Iterator& begin, Iterator end);
+
 
 template <class Iterator>
-Expression parseExpressionFwd(Iterator& begin, Iterator end);
-
-
-struct {
-    template <class Iterator>
-    Expression operator() (Iterator& it, Iterator end) const
-    {
-        const Iterator oldIt = it;
-        bool isNegative = false;
-        while (parsePattern(it, end, "not")) {
-            isNegative = !isNegative;
-        }
-        Expression expression;
-        if ( (expression = parseComparison(it, end)) ||
-             (parsePattern(it, end, "(") && (expression = parseExpressionFwd(it, end)) && parsePattern(it, end, ")")) )
-        {
-            if (isNegative) {
-                return std::not1(std::move(expression));
-            } else {
-                return std::move(expression);
-            }
-        }
-        it = oldIt;
-        return {};
+Expression parseNotExpression(Iterator& it, Iterator end)
+{
+    const Iterator oldIt = it;
+    bool isNegative = false;
+    while (parsePattern(it, end, "not")) {
+        isNegative = !isNegative;
     }
-} parseNotExpression;
+    Expression expression;
+    if ( (expression = parseComparison(it, end)) ||
+         (parsePattern(it, end, "(") && (expression = parseExpression(it, end)) && parsePattern(it, end, ")")) )
+    {
+        if (isNegative) {
+            return std::not1(std::move(expression));
+        } else {
+            return std::move(expression);
+        }
+    }
+    it = oldIt;
+    return {};
+}
 
 
 // and_expression: not_expression ['and' not_expression]
 
 struct AndExpression {
     Expression left, right;
-    bool operator() (const Variables& variables) const
-    {
-        return left(variables) && right(variables);
-    }
+    bool operator() (const Variables& variables) const { return left(variables) && right(variables); }
 };
 
-struct {
-    template <class Iterator>
-    Expression operator() (Iterator& it, Iterator end) const
-    {
-        const Iterator oldIt = it;
-        if (Expression left = parseNotExpression(it, end)) {
-            if (parsePattern(it, end, "and")) {
-                if (Expression right = (*this)(it, end)) {
-                    return AndExpression{ std::move(left), std::move(right) };
-                }
-            } else {
-                return std::move(left);
+template <class Iterator>
+Expression parseAndExpression(Iterator& it, Iterator end)
+{
+    const Iterator oldIt = it;
+    if (Expression left = parseNotExpression(it, end)) {
+        if (parsePattern(it, end, "and")) {
+            if (Expression right = parseAndExpression(it, end)) {
+                return AndExpression{ std::move(left), std::move(right) };
             }
+        } else {
+            return std::move(left);
         }
-        it = oldIt;
-        return {};
     }
-} parseAndExpression;
+    it = oldIt;
+    return {};
+}
 
 
-// or_expression: and_expression ('or' and_expression)*
+// or_expression: and_expression ['or' or_expression]
 
 struct OrExpression {
     Expression left, right;
-    bool operator() (const Variables& variables) const
-    {
-        return left(variables) || right(variables);
-    }
+    bool operator() (const Variables& variables) const { return left(variables) || right(variables); }
 };
 
-struct {
-    template <class Iterator>
-    Expression operator() (Iterator& it, Iterator end) const
-    {
-        const Iterator oldIt = it;
-        if (Expression left = parseAndExpression(it, end)) {
-            if (parsePattern(it, end, "or")) {
-                if (Expression right = (*this)(it, end)) {
-                    return OrExpression{ std::move(left), std::move(right) };
-                }
-            } else {
-                return std::move(left);
+template <class Iterator>
+Expression parseOrExpression(Iterator& it, Iterator end)
+{
+    const Iterator oldIt = it;
+    if (Expression left = parseAndExpression(it, end)) {
+        if (parsePattern(it, end, "or")) {
+            if (Expression right = parseOrExpression(it, end)) {
+                return OrExpression{ std::move(left), std::move(right) };
             }
+        } else {
+            return std::move(left);
         }
-        it = oldIt;
-        return {};
     }
-} parseOrExpression;
+    it = oldIt;
+    return {};
+}
 
 
 // expression: or_expression 
 
-struct {
-    template <class Iterator>
-    Expression operator() (Iterator& begin, Iterator end) const
-    {
-        return parseOrExpression(begin, end);
-    }
-} parseExpression;
-
-
 template <class Iterator>
-Expression parseExpressionFwd(Iterator& begin, Iterator end)
+Expression parseExpression(Iterator& begin, Iterator end)
 {
-    return parseExpression(begin, end);
-}
-
-
-template <class ResultType, class Parser>
-void accept(const std::string& input, const Parser& parser)
-{
-    ResultType result;
-    auto it = input.begin();
-    if (!parser(it, input.end(), &result) || input.end() != skipSpaces(it, input.end())) {
-        std::cerr << "Fail: '" << input << "'" << std::endl;
-    }
+    return parseOrExpression(begin, end);
 }
 
 
@@ -399,23 +349,22 @@ const char* exec(const std::string& expression, const Variables& variables)
 }
 
 
-
 int main()
 {
-    accept<std::string>("hello_world", parseName);
-    accept<std::string>(" hello_world ", parseName);
+    // accept<std::string>("hello_world", parseName);
+    // accept<std::string>(" hello_world ", parseName);
 
-    accept<std::string>("'hello_world ' ", parseString);
-    accept<std::string>("' hello_world' ", parseString);
+    // accept<std::string>("'hello_world ' ", parseString);
+    // accept<std::string>("' hello_world' ", parseString);
 
-    accept<std::unordered_set<std::string> >("{ 'a', 'b' , 'c' }", parseSet);
-    accept<std::unordered_set<std::string> >("{ 'a' }", parseSet);
-    accept<std::unordered_set<std::string> >("{ }", parseSet);
-    accept<std::unordered_set<std::string> >("{ street, locality, country, 'ab cd' }", parseSet);
+    // accept<std::unordered_set<std::string> >("{ 'a', 'b' , 'c' }", parseSet);
+    // accept<std::unordered_set<std::string> >("{ 'a' }", parseSet);
+    // accept<std::unordered_set<std::string> >("{ }", parseSet);
+    // accept<std::unordered_set<std::string> >("{ street, locality, country, 'ab cd' }", parseSet);
 
-    //accept<Term>(" xxx", parseTerm);
-    //accept<Term>("'xxx1'", parseTerm);
-    accept<String>("'xxx2'", parseString);
+    // //accept<Term>(" xxx", parseTerm);
+    // //accept<Term>("'xxx1'", parseTerm);
+    // accept<String>("'xxx2'", parseString);
 
     // accept<Comparison>(" 'xxx' in { a, b, 'c' } ", parseComparison);
 
