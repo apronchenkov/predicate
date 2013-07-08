@@ -5,29 +5,23 @@
 #include <string>
 #include <unordered_set>
 
+namespace {
+
 /*
-
-
- expression: '(' expression ')' | or_expression 
- or_expression: and_expression ('or' and_expression)*
+ expression: or_expression
+ or_expression: and_expression ['or' or_expression]
  and_expression: not_expression ['and' and_expression]
- not_expression: ['not'] comparison
-
+ not_expression: 'not' not_expression | comparison | '(' expression ')'
  comparison: term '==' term |
              term '!=' term |
              term 'in' set |
              term 'not' 'in' set
-
- term: NAME | STRING
  set: '{' '}' | '{' NAME set_tail* '} | '{' STRING set_tail* '}'
  set_tail: ',' NAME | ',' STRING
-
- 
+ term: NAME | STRING
  */
 
-
 static const std::string EMPTY_STRING;
-
 
 typedef std::string String;
 typedef std::unordered_set<std::string> Set;
@@ -278,7 +272,7 @@ Expression parseNotExpression(Iterator& it, Iterator end)
 }
 
 
-// and_expression: not_expression ['and' not_expression]
+// and_expression: not_expression ['and' and_expression]
 
 struct AndExpression {
     Expression left, right;
@@ -328,7 +322,7 @@ Expression parseOrExpression(Iterator& it, Iterator end)
 }
 
 
-// expression: or_expression 
+// expression: or_expression
 
 template <class Iterator>
 Expression parseExpression(Iterator& begin, Iterator end)
@@ -336,14 +330,27 @@ Expression parseExpression(Iterator& begin, Iterator end)
     return parseOrExpression(begin, end);
 }
 
+} // namespace
 
-const char* exec(const std::string& expression, const Variables& variables)
+Predicate parsePredicate(const std::string& predicate)
 {
-    auto it = expression.begin();
-    if (Expression result = parseExpression(it, expression.end())) {
-        if (expression.end() == skipSpaces(it, expression.end())) {
-            return result(variables) ? "True" : "False";
+    auto it = predicate.begin();
+    if (Predicate result = parseExpression(it, predicate.end())) {
+        if (predicate.end() == skipSpaces(it, predicate.end())) {
+            return result;
         }
+    }
+    return {};
+}
+
+
+
+const char* exec(const std::string& predicate, const Variables& variables)
+{
+    if (Predicate result = parsePredicate(predicate)) {
+        return result(variables) ? "True" : "False";
+    } else {
+        std::cerr << "Unable to parse: " << predicate << std::endl;
     }
     return "None";
 }
@@ -377,9 +384,10 @@ int main()
     //accept<Expression>(" not 'xxx'", parseExpression);
 
 
-    std::cout << exec("kind in {street, district, locality} and country == 'TR'", {
-        {"kind", "street"},
-        {"country", "TR"}
+    std::cout << exec("kind in {'street', 'district', 'locality'} and not 'TR' == country or not fallback=='True'", {
+        {"kind", "localit"},
+        {"country", "TR"},
+        {"fallback", "Tre"}
     }) << '\n';
 
     return 0;
