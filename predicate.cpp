@@ -8,17 +8,18 @@
 namespace {
 
 /*
- expression: or_expression
- or_expression: and_expression ['or' or_expression]
- and_expression: not_expression ['and' and_expression]
- not_expression: 'not' not_expression | comparison | '(' expression ')'
- comparison: term '==' term |
-             term '!=' term |
-             term 'in' set |
-             term 'not' 'in' set
- set: '{' '}' | '{' NAME set_tail* '} | '{' STRING set_tail* '}'
- set_tail: ',' NAME | ',' STRING
- term: NAME | STRING
+    expression: or_expression
+    or_expression: and_expression ['or' or_expression]
+    and_expression: not_expression ['and' and_expression]
+    not_expression: 'not' not_expression | comparison | '(' expression ')'
+    comparison: term '==' term |
+                term '!=' term |
+                term 'in' set |
+                term 'not' 'in' set |
+                term
+    set: '{' '}' | '{' NAME set_tail* '} | '{' STRING set_tail* '}'
+    set_tail: ',' NAME | ',' STRING
+    term: NAME | STRING
  */
 
 static const std::string EMPTY_STRING;
@@ -26,7 +27,6 @@ static const std::string EMPTY_STRING;
 typedef std::string String;
 typedef std::unordered_set<std::string> Set;
 typedef std::function<const std::string&(const Variables&)> Term;
-typedef std::function<bool(const Variables&)> Comparison;
 typedef std::function<bool(const Variables&)> Expression;
 
 
@@ -66,7 +66,7 @@ bool parseName(Iterator& begin, Iterator end, String* name)
         return false;
     }
     const Iterator start = it;
-    while (it != end && (isalpha(static_cast<unsigned char>(*it)) || isalpha(static_cast<unsigned char>(*it)) || *it == '_')) {
+    while (it != end && (isalnum(static_cast<unsigned char>(*it)) || *it == '_')) {
         ++it;
     }
     const Iterator stop = it;
@@ -82,25 +82,34 @@ template <class Iterator>
 bool parseString(Iterator& begin, Iterator end, String* string)
 {
     Iterator it = skipSpaces(begin, end);
-    if (!parsePattern(it, end, "'")) {
-        return false;
-    }
-    const Iterator start = it;
-    while (it != end && *it != '\'') {
+    if (parsePattern(it, end, "'")) {
+        const Iterator start = it;
+        while (it != end && *it != '\'') {
+            ++it;
+        }
+        if (it == end) {
+            return false;
+        }
+        string->assign(start, it);
         ++it;
+
+    } else {
+        const Iterator start = it;
+        while (it != end && (isalnum(static_cast<unsigned char>(*it)) || *it == '_')) {
+            ++it;
+        }
+        if (it == start) {
+            return false;
+        }
+        string->assign(start, it);
     }
-    const Iterator stop = it;
-    if (!parsePattern(it, end, "'")) {
-        return false;
-    }
-    string->assign(start, stop);
     begin = it;
     return true;
 }
 
 
-// set: '{' '}' | '{' NAME set_tail* '} | '{' STRING set_tail* '}'
-// set_tail: ',' NAME | ',' STRING
+// set: '{' '}' | '{' STRING set_tail* '}'
+// set_tail: ',' STRING
 
 template <class Iterator>
 bool parseSetTail(Iterator& begin, Iterator end, Set* set)
@@ -110,7 +119,7 @@ bool parseSetTail(Iterator& begin, Iterator end, Set* set)
         return false;
     }
     String string;
-    if (!parseString(it, end, &string) && !parseName(it, end, &string)) {
+    if (!parseString(it, end, &string)) {
         return false;
     }
     set->insert(std::move(string));
@@ -127,7 +136,7 @@ bool parseSet(Iterator& begin, Iterator end, Set* set)
         return false;
     }
     String string;
-    if (parseString(it, end, &string) || parseName(it, end, &string)) {
+    if (parseString(it, end, &string)) {
         set->insert(std::move(string));
         while (parseSetTail(it, end, set));
     }
@@ -186,7 +195,8 @@ Term parseTerm(Iterator& begin, Iterator end)
 // comparison: term '==' term |
 //             term '!=' term |
 //             term 'in' set |
-//             term 'not' 'in' set
+//             term 'not' 'in' set |
+//             term
 
 struct EqualComparison {
     Term left, right;
@@ -208,6 +218,11 @@ struct NotInComparison {
     Term left;
     Set set;
     bool operator() (const Variables& variables) const { return set.count(left(variables)) == 0; }
+};
+
+struct NotEmpty {
+    Term term;
+    bool operator() (const Variables& variables) const { return !term(variables).empty(); }
 };
 
 template <class Iterator>
@@ -236,6 +251,8 @@ Expression parseComparison(Iterator& it, Iterator end)
             if (parseSet(it, end, &right)) {
                 return NotInComparison{ std::move(left), std::move(right) };;
             }
+        } else {
+            return NotEmpty{ std::move(left) };
         }
     }
     it = oldIt;
@@ -243,11 +260,11 @@ Expression parseComparison(Iterator& it, Iterator end)
 }
 
 
-// not_expression: 'not' not_expression | comparison | '(' expression ')'
-
 template <class Iterator>
 Expression parseExpression(Iterator& begin, Iterator end);
 
+
+// not_expression: 'not' not_expression | comparison | '(' expression ')'
 
 template <class Iterator>
 Expression parseNotExpression(Iterator& it, Iterator end)
@@ -325,9 +342,9 @@ Expression parseOrExpression(Iterator& it, Iterator end)
 // expression: or_expression
 
 template <class Iterator>
-Expression parseExpression(Iterator& begin, Iterator end)
+Expression parseExpression(Iterator& it, Iterator end)
 {
-    return parseOrExpression(begin, end);
+    return parseOrExpression(it, end);
 }
 
 } // namespace
@@ -344,51 +361,66 @@ Predicate parsePredicate(const std::string& predicate)
 }
 
 
+// variable: NAME=STRING
+// variables: variable (',' variable)*
 
-const char* exec(const std::string& predicate, const Variables& variables)
+template <class Iterator>
+bool parseVariable(Iterator& it, Iterator end, Variables* variables)
 {
-    if (Predicate result = parsePredicate(predicate)) {
-        return result(variables) ? "True" : "False";
-    } else {
-        std::cerr << "Unable to parse: " << predicate << std::endl;
+    const Iterator oldIt = it;
+    String name, value;
+    if (parseName(it, end, &name) && parsePattern(it, end, "=") && parseString(it, end, &value)) {
+        (*variables)[name] = value;
+        return true;
     }
-    return "None";
+    it = oldIt;
+    return false;
 }
 
 
-int main()
+template <class Iterator>
+bool parseVariables(Iterator& begin, Iterator end, Variables* variables)
 {
-    // accept<std::string>("hello_world", parseName);
-    // accept<std::string>(" hello_world ", parseName);
+    variables->clear();
+    Iterator it = begin;
+    do {
+        if (!parseVariable(it, end, variables)) {
+            return false;
+        }
+    } while (parsePattern(it, end, ","));
+    begin = it;
+    return true;
+}
 
-    // accept<std::string>("'hello_world ' ", parseString);
-    // accept<std::string>("' hello_world' ", parseString);
-
-    // accept<std::unordered_set<std::string> >("{ 'a', 'b' , 'c' }", parseSet);
-    // accept<std::unordered_set<std::string> >("{ 'a' }", parseSet);
-    // accept<std::unordered_set<std::string> >("{ }", parseSet);
-    // accept<std::unordered_set<std::string> >("{ street, locality, country, 'ab cd' }", parseSet);
-
-    // //accept<Term>(" xxx", parseTerm);
-    // //accept<Term>("'xxx1'", parseTerm);
-    // accept<String>("'xxx2'", parseString);
-
-    // accept<Comparison>(" 'xxx' in { a, b, 'c' } ", parseComparison);
-
-    // accept<Expression>(" not 'xxx' not in { a, b, 'c' } ", parseNotExpression);
-
-    // accept<Expression>(" not 'xxx' not in { a, b, 'c' } and xx!='adsf'", parseAndExpression);
-
-    // accept<Expression>(" not 'xxx' not in { a, b, 'c' } and xx!='adsf' or not (xx == 'uu')", parseExpression);
-
-    //accept<Expression>(" not 'xxx'", parseExpression);
+bool parseVariables(const std::string& input, Variables* variables)
+{
+    variables->clear();
+    auto it = input.begin();
+    return parseVariables(it, input.end(), variables) && input.end() == skipSpaces(it, input.end());
+}
 
 
-    std::cout << exec("kind in {'street', 'district', 'locality'} and not 'TR' == country or not fallback=='True'", {
-        {"kind", "localit"},
-        {"country", "TR"},
-        {"fallback", "Tre"}
-    }) << '\n';
 
+int main(int argc, const char** argv)
+{
+    if (argc < 3) {
+        std::cerr << "usage: predicate [variable_set ...]\n\n";
+        return -1;
+    }
+
+    const Predicate predicate = parsePredicate(argv[1]);
+    if (!predicate) {
+        std::cerr << "Unable to parse predicate: " << argv[1] << std::endl;
+        return -1;
+    }
+
+    for (int index = 2; index < argc; ++index) {
+        Variables variables;
+        if (parseVariables(argv[index], &variables)) {
+            std::cout << argv[1] << ": " << argv[index] << ": " << (predicate(variables) ? "True" : "False") << std::endl;
+        } else {
+            std::cerr << "Unable to parse variable_set: " << argv[index] << std::endl;
+        }
+    }
     return 0;
 }

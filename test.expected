@@ -1,0 +1,43 @@
+x == y: x = 0, y = 0: True
+x == y: x = 0, y = 1: False
+x == y: x = 1, y = 0: False
+x == y: x = 1, y = 1: True
+x == y: x = 0, y = 0: True
+x == y: x = 0, y = 1: False
+x == y: x = 1, y = 0: False
+x == y: x = 1, y = 1: True
+x in {a, b}: x = a: True
+x in {a, b}: x = b: True
+x in {a, b}: x = c: False
+x not in {a, b}: x = a: False
+x not in {a, b}: x = b: False
+x not in {a, b}: x = c: True
+x: x = '': False
+x: x = 0: True
+x: x = 1: True
+(x): x = '': False
+(x): x = 0: True
+(x): x = 1: True
+not x: x = '': True
+not x: x = 0: False
+not x: x = 1: False
+x and y: x = '', y = '': False
+x and y: x = '', y = 1: False
+x and y: x = 1, y = '': False
+x and y: x = 1, y = 1: True
+x or y: x = '', y = '': False
+x or y: x = '', y = 1: True
+x or y: x = 1, y = '': True
+x or y: x = 1, y = 1: True
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=locality, country=RU: False
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=locality, country=TR: False
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=district, country=RU: False
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=district, country=TR: True
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=street, country=RU: False
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=street, country=TR: True
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=locality, country=TR, fallback=1: True
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=district, country=RU, fallback=1: True
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=district, country=TR, fallback=1: True
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=street, country=RU, fallback=1: True
+kind in {'street', 'district'} and 'TR' == country or fallback: kind=street, country=TR, fallback=1: True
+kind in {'street', 'district'} and 'TR' == country or fallback: fallback=1: True
